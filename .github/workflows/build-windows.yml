@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: python -m pip install --upgrade pip -r requirements.txt pyinstaller
+        run: python -m pip install --upgrade pip -r requirements.txt pyinstaller pytest
 
       - name: Run tests
         run: python -m pytest -q
