@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Build output
+build/
+dist/
+packaging/dist/
+packaging/staging/
+*.spec
+
+# Local env / scratch
+.env
+.env.*
+scratch/
+*.tmp
+
+# Never commit built binaries or sample PDFs from local runs
+*.exe
+/out/

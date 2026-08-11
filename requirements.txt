@@ -1,0 +1,16 @@
+# PDF Toolkit runtime dependencies.
+# All licenses are permissive or weak-copyleft (Apache-2.0 project).
+#
+#   pypdf       BSD-3-Clause
+#   pikepdf     MPL-2.0  (wraps qpdf, Apache-2.0)
+#   pypdfium2   BSD-3-Clause / Apache-2.0 (PDFium)
+#   Pillow      HPND (MIT-style)
+#   reportlab   BSD
+#
+# NO AGPL (no PyMuPDF/fitz, no Ghostscript) and no proprietary deps.
+
+pypdf>=5.1,<7
+pikepdf>=9,<10
+pypdfium2>=4.30,<5
+Pillow>=10.4,<12
+reportlab>=4.2,<5
