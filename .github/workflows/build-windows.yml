@@ -34,8 +34,10 @@ jobs:
           --version-file packaging/version.txt
           --add-data "pdf-toolkit.ico;."
           --collect-all pikepdf
-          --collect-all pypdfium2
           --collect-all pypdf
+          --collect-all cryptographyium2
+          --collect-all pypdf
+          --collect-all cryptography
           --collect-submodules reportlab
           --collect-submodules PIL
           pdf_toolkit_app.py
