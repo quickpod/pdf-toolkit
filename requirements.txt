@@ -14,3 +14,4 @@ pikepdf>=9,<10
 pypdfium2>=4.30,<5
 Pillow>=10.4,<12
 reportlab>=4.2,<5
+cryptography>=3.1        # pypdf AES read/write (Apache-2.0/BSD, permissive)
