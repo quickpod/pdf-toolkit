@@ -49,23 +49,7 @@ POSITIONS = [
 ]
 WM_POSITIONS = POSITIONS + ["tiled"]
 
-# ---- colour palettes (mirror the QuickOpen palette) -------------------------
-PALETTES = {
-    "light": {
-        "bg": "#f5f7fa", "surface": "#ffffff", "text": "#141820",
-        "muted": "#5b6472", "primary": "#2f5fe0", "primary_hi": "#2450c8",
-        "entry": "#ffffff", "border": "#d5dae2", "sel": "#2f5fe0",
-        "sel_fg": "#ffffff", "trough": "#e2e7ef", "ok": "#1f7a3d",
-        "err": "#c0392b",
-    },
-    "dark": {
-        "bg": "#0f1115", "surface": "#1a1e24", "text": "#f1f3f7",
-        "muted": "#9aa4b2", "primary": "#5b86f7", "primary_hi": "#7098ff",
-        "entry": "#1a1e24", "border": "#2a2f38", "sel": "#5b86f7",
-        "sel_fg": "#0f1115", "trough": "#2a2f38", "ok": "#5bd68a",
-        "err": "#ff6b5e",
-    },
-}
+ACCENT = "#b71c2d"      # pdf-toolkit icon color (accent for the Aura theme)
 
 # (category, [(tool_id, label), ...]) -- tool_id maps to a _panel_<id> method.
 TOOL_TREE = [
@@ -116,6 +100,24 @@ TOOL_TREE = [
         ("batchimages", "Batch → images"),
     ]),
 ]
+
+# Each tool category becomes one Aura sidebar section (a nav pill) whose panel
+# hosts a small notebook of that category's tools.  slug + a DejaVu-safe glyph
+# (see RETROFIT gotcha #10) per category.
+_CAT_SLUG = {
+    "Organize":   ("organize", "▤"),
+    "Convert":    ("convert", "⇄"),
+    "Optimize":   ("optimize", "⚙"),
+    "Security":   ("security", "⊙"),
+    "Watermark":  ("watermark", "✳"),
+    "Pages/Meta": ("pagesmeta", "✎"),
+    "Advanced":   ("advanced", "◈"),
+    "Batch":      ("batch", "◉"),
+}
+
+# Module-level section list so the GUI crawler can enumerate every section.
+SECTIONS = [(_CAT_SLUG[cat][0], cat) for cat, _tools in TOOL_TREE] + \
+    [("about", "About")]
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +203,10 @@ def build_app():
     Kept inside a function so this module imports cleanly without a display.
     """
     import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
+    from tkinter import ttk as _ttk, filedialog, messagebox
+    import customtkinter as ctk
 
-    from . import guiconfig
+    from . import aura, guiconfig
     from .errors import PdfToolkitError
     from . import (
         merge, split_pages, split_ranges, split_every,
@@ -218,6 +221,52 @@ def build_app():
         redact_rects, compare_text, repair,
         batch_compress, batch_watermark, batch_convert_to_images,
     )
+
+    # ------------------------------------------------------------------
+    # Aura widget shim: a drop-in stand-in for the ``ttk`` module so the tool
+    # panels below can stay verbatim while their interactive widgets become
+    # Aura (CustomTkinter) widgets.  ``Button``/``Entry``/``Combobox`` are
+    # remapped to Aura equivalents (rounded, accent focus ring, primary =
+    # accent fill); everything else (Frame/Label/Radiobutton/Spinbox/Scale/
+    # Labelframe/Treeview/Scrollbar/Notebook…) delegates to real ttk, which
+    # Aura's ``style_ttk`` restyles to the palette.  This is how the retrofit
+    # map is applied without rewriting 30 panels by hand.
+    # ------------------------------------------------------------------
+    class _AuraTtk:
+        def __init__(self, real):
+            self._ttk = real
+
+        def __getattr__(self, name):
+            return getattr(self._ttk, name)
+
+        def Button(self, master, text="", command=None, style=None,
+                   width=None, **kw):
+            kind = "primary" if style == "Accent.TButton" else "secondary"
+            # ttk width is in characters; Aura buttons size to their label, so
+            # ignore tiny widths and only honor a generous one as a px min.
+            if width and width >= 12:
+                kw.setdefault("width", int(width) * 7)
+            return aura.AuraButton(master, text=text, command=command,
+                                   kind=kind, **kw)
+
+        def Entry(self, master, textvariable=None, width=None, show=None,
+                  **kw):
+            if show is not None:
+                kw["show"] = show
+            if width:
+                kw.setdefault("width", max(80, int(width) * 8))
+            return aura.AuraEntry(master, textvariable=textvariable, **kw)
+
+        def Combobox(self, master, textvariable=None, values=None, state=None,
+                     width=None, command=None, **kw):
+            if width:
+                kw.setdefault("width", max(96, int(width) * 9))
+            return aura.AuraCombo(master, variable=textvariable,
+                                  values=list(values or []),
+                                  state=state or "normal", command=command,
+                                  **kw)
+
+    ttk = _AuraTtk(_ttk)
 
     FONT = "Segoe UI"
 
@@ -340,36 +389,48 @@ def build_app():
 
     # -- the main window --------------------------------------------------
 
-    class App(tk.Tk):
+    class App(aura.AuraApp):
         def __init__(self):
-            super().__init__()
-            self.title(WINDOW_TITLE)
-            self.geometry("1080x680")
-            self.minsize(880, 560)
+            super().__init__(
+                title=WINDOW_TITLE, app_name="PDF Toolkit", accent=ACCENT,
+                theme=guiconfig.get_theme(),
+                icon_png=asset_path("pdf-toolkit.png"), version=APP_VERSION,
+                tagline="offline PDF tools",
+                on_theme_change=guiconfig.set_theme,
+                size=(1180, 800), min_size=(1000, 640))
 
-            self.theme = guiconfig.get_theme()
             self._busy = False
-            self._panels = {}          # tool_id -> built frame (lazy)
-            self._current = None
-            self._tracked = []         # (tk_widget, role) for manual re-theming
-            self._img_refs = []        # keep PhotoImage refs alive
-            self._history = []         # session output paths
+            self._history = []          # session output paths
             self._last_output_dir = None
             self._tmpdir = tempfile.mkdtemp(prefix="pdftk_gui_")
+            self._panel_frames = {}     # tool_id -> inner panel frame
+            self._tool_home = {}        # tool_id -> (section_id, notebook, tab)
 
             self._set_icon()
             self._build_menu()
-            self._build_layout()
-            self._apply_theme()
+            # 'Open folder' lives in the status bar; shown only after a success
+            # that produced output paths.
+            self.openfolder_btn = aura.AuraButton(
+                self.statusbar.actions, "Open folder", kind="secondary",
+                height=30, command=self._open_last_folder)
+
+            # One sidebar section per tool category; each hosts a small
+            # (Aura-styled) notebook of that category's tools.
+            for cat, tools in TOOL_TREE:
+                slug, glyph = _CAT_SLUG[cat]
+                self.add_section(slug, cat, glyph,
+                                 self._make_category_builder(cat, tools))
+            self.add_section("about", "About", "ℹ", self._build_about)
+
+            self.show(_CAT_SLUG[TOOL_TREE[0][0]][0])   # Organize
+            self.set_status("Ready")
             self.protocol("WM_DELETE_WINDOW", self._on_close)
-            # open the first tool by default
-            self.after(50, lambda: self._select_first_tool())
 
         # ---- assets / icon
         def _set_icon(self):
             try:
                 ico = asset_path("pdf-toolkit.ico")
-                if ico:
+                if ico and os.name == "nt":
                     self.iconbitmap(ico)
                     return
             except Exception:
@@ -383,118 +444,11 @@ def build_app():
             except Exception:
                 pass  # icon is cosmetic; never block launch
 
-        # ---- theming
+        # ---- raw-tk theming registration (delegates to the kit)
         def track(self, widget, role):
-            self._tracked.append((widget, role))
+            aura.track(widget, role)
 
-        def _pal(self):
-            return PALETTES[self.theme]
-
-        def _apply_theme(self):
-            p = self._pal()
-            style = ttk.Style(self)
-            try:
-                style.theme_use("clam")
-            except Exception:
-                pass
-            self.configure(bg=p["bg"])
-            style.configure(".", background=p["bg"], foreground=p["text"],
-                            fieldbackground=p["entry"], bordercolor=p["border"],
-                            font=(FONT, 10))
-            style.configure("TFrame", background=p["bg"])
-            style.configure("Sidebar.TFrame", background=p["surface"])
-            style.configure("Card.TFrame", background=p["surface"])
-            style.configure("TLabel", background=p["bg"], foreground=p["text"])
-            style.configure("Muted.TLabel", background=p["bg"], foreground=p["muted"])
-            style.configure("Header.TLabel", background=p["bg"], foreground=p["text"],
-                            font=(FONT, 15, "bold"))
-            style.configure("Sub.TLabel", background=p["bg"], foreground=p["muted"],
-                            font=(FONT, 10))
-            style.configure("Brand.TLabel", background=p["surface"],
-                            foreground=p["text"], font=(FONT, 12, "bold"))
-            style.configure("Ok.TLabel", background=p["bg"], foreground=p["ok"])
-            style.configure("Err.TLabel", background=p["bg"], foreground=p["err"])
-            style.configure("Status.TLabel", background=p["surface"],
-                            foreground=p["muted"])
-            style.configure("TButton", background=p["surface"], foreground=p["text"],
-                            bordercolor=p["border"], focuscolor=p["surface"],
-                            padding=(10, 5))
-            style.map("TButton",
-                      background=[("active", p["trough"]), ("disabled", p["bg"])],
-                      foreground=[("disabled", p["muted"])])
-            style.configure("Accent.TButton", background=p["primary"],
-                            foreground="#ffffff", padding=(12, 6))
-            style.map("Accent.TButton",
-                      background=[("active", p["primary_hi"]),
-                                  ("disabled", p["border"])],
-                      foreground=[("disabled", p["muted"])])
-            style.configure("Toggle.TButton", background=p["surface"],
-                            foreground=p["text"], padding=(8, 4))
-            for name in ("TEntry", "TSpinbox"):
-                style.configure(name, fieldbackground=p["entry"], foreground=p["text"],
-                                insertcolor=p["text"], bordercolor=p["border"])
-            style.configure("TCombobox", fieldbackground=p["entry"],
-                            foreground=p["text"], background=p["surface"],
-                            arrowcolor=p["text"])
-            style.map("TCombobox",
-                      fieldbackground=[("readonly", p["entry"])],
-                      foreground=[("readonly", p["text"])])
-            style.configure("TCheckbutton", background=p["bg"], foreground=p["text"])
-            style.map("TCheckbutton", background=[("active", p["bg"])])
-            style.configure("TRadiobutton", background=p["bg"], foreground=p["text"])
-            style.map("TRadiobutton", background=[("active", p["bg"])])
-            style.configure("TLabelframe", background=p["bg"], foreground=p["text"],
-                            bordercolor=p["border"])
-            style.configure("TLabelframe.Label", background=p["bg"],
-                            foreground=p["muted"])
-            style.configure("Treeview", background=p["surface"],
-                            fieldbackground=p["surface"], foreground=p["text"],
-                            bordercolor=p["border"], rowheight=24)
-            style.map("Treeview", background=[("selected", p["primary"])],
-                      foreground=[("selected", p["sel_fg"])])
-            style.configure("Sidebar.Treeview", background=p["surface"],
-                            fieldbackground=p["surface"])
-            style.configure("TScale", background=p["bg"], troughcolor=p["trough"])
-            style.configure("Horizontal.TScale", background=p["bg"],
-                            troughcolor=p["trough"])
-            style.configure("TScrollbar", background=p["surface"],
-                            troughcolor=p["bg"], bordercolor=p["border"],
-                            arrowcolor=p["text"])
-            style.configure("TSeparator", background=p["border"])
-
-            # manually re-colour raw tk widgets (Listbox / Text / Canvas)
-            for widget, role in list(self._tracked):
-                try:
-                    if role == "listbox":
-                        widget.configure(bg=p["surface"], fg=p["text"],
-                                         selectbackground=p["primary"],
-                                         selectforeground=p["sel_fg"],
-                                         highlightthickness=1,
-                                         highlightbackground=p["border"],
-                                         borderwidth=0)
-                    elif role == "text":
-                        widget.configure(bg=p["surface"], fg=p["text"],
-                                         insertbackground=p["text"],
-                                         selectbackground=p["primary"],
-                                         selectforeground=p["sel_fg"],
-                                         highlightthickness=1,
-                                         highlightbackground=p["border"],
-                                         borderwidth=0)
-                    elif role == "canvas":
-                        widget.configure(bg=p["surface"],
-                                         highlightthickness=1,
-                                         highlightbackground=p["border"])
-                except Exception:
-                    pass
-
-        def toggle_theme(self):
-            self.theme = "dark" if self.theme == "light" else "light"
-            guiconfig.set_theme(self.theme)
-            self._apply_theme()
-            self._theme_btn.configure(
-                text="☀ Light mode" if self.theme == "dark" else "🌙 Dark mode")
-
-        # ---- menu
+        # ---- menu (native menus stay; theme also lives in the sidebar switch)
         def _build_menu(self):
             bar = tk.Menu(self)
             filem = tk.Menu(bar, tearoff=0)
@@ -511,11 +465,14 @@ def build_app():
             bar.add_cascade(label="File", menu=filem)
 
             viewm = tk.Menu(bar, tearoff=0)
-            viewm.add_command(label="Toggle dark mode", command=self.toggle_theme)
+            viewm.add_command(
+                label="Toggle dark mode",
+                command=lambda: self.set_theme(
+                    "light" if self.theme == "dark" else "dark"))
             bar.add_cascade(label="View", menu=viewm)
 
             helpm = tk.Menu(bar, tearoff=0)
-            helpm.add_command(label="About", command=self._about)
+            helpm.add_command(label="About", command=lambda: self.show("about"))
             helpm.add_command(label="Open project page (quickopen.ai)",
                               command=lambda: open_with_default_app(PROJECT_URL))
             bar.add_cascade(label="Help", menu=helpm)
@@ -546,121 +503,75 @@ def build_app():
             p = filedialog.askopenfilename(title="Open a PDF", filetypes=PDF_TYPES)
             if p:
                 self.remember_input(p)
-                # route to the Info panel so "Open" does something useful
-                self._select_tool("info")
-                panel = self._panels.get("info")
-                if panel and hasattr(panel, "load_path"):
-                    panel.load_path(p)
+                # route to the Info tool so "Open" does something useful
+                self._goto_tool("info")
+                frame = self._panel_frames.get("info")
+                if frame is not None and hasattr(frame, "load_path"):
+                    frame.load_path(p)
 
-        # ---- layout
-        def _build_layout(self):
-            # top brand bar
-            top = ttk.Frame(self, style="Sidebar.TFrame", padding=(12, 8))
-            top.pack(fill="x", side="top")
-            ttk.Label(top, text="PDF Toolkit", style="Brand.TLabel").pack(side="left")
-            ttk.Label(top, style="Status.TLabel",
-                      text="  offline · open source · by QuickOpen").pack(side="left")
-            self._theme_btn = ttk.Button(
-                top, style="Toggle.TButton", command=self.toggle_theme,
-                text="☀ Light mode" if self.theme == "dark" else "🌙 Dark mode")
-            self._theme_btn.pack(side="right")
+        # ---- sections (categories) + their tool notebooks
+        def _make_category_builder(self, cat, tools):
+            """Return a lazy builder that fills a category section with a
+            notebook of its tools (each tab hosts one ``_panel_<id>``)."""
+            def builder(frame, cat=cat, tools=tools):
+                slug = _CAT_SLUG[cat][0]
+                nb = ttk.Notebook(frame)
+                nb.pack(fill="both", expand=True)
+                for tid, label in tools:
+                    tab = ttk.Frame(nb, style="TFrame")
+                    nb.add(tab, text=label)
+                    desc = TOOL_DESCRIPTIONS.get(tid, "")
+                    if desc:
+                        ttk.Label(tab, text=desc, style="Muted.TLabel",
+                                  wraplength=760, justify="left").pack(
+                            anchor="w", padx=2, pady=(12, 8))
+                    inner = ttk.Frame(tab, style="TFrame")
+                    inner.pack(fill="both", expand=True, padx=2)
+                    getattr(self, "_panel_" + tid)(inner)
+                    self._panel_frames[tid] = inner
+                    self._tool_home[tid] = (slug, nb, tab)
+            return builder
 
-            body = ttk.Frame(self, style="TFrame")
-            body.pack(fill="both", expand=True)
-
-            # sidebar
-            side = ttk.Frame(body, style="Sidebar.TFrame", width=220)
-            side.pack(side="left", fill="y")
-            side.pack_propagate(False)
-            self.nav = ttk.Treeview(side, show="tree", selectmode="browse",
-                                    style="Sidebar.Treeview")
-            self.nav.pack(fill="both", expand=True, padx=6, pady=6)
-            self._nav_ids = {}
+        def _goto_tool(self, tool_id):
+            """Switch to the section+tab that hosts ``tool_id``."""
             for cat, tools in TOOL_TREE:
-                cid = self.nav.insert("", "end", text=cat, open=True,
-                                      tags=("cat",))
-                for tid, label in tools:
-                    iid = self.nav.insert(cid, "end", text="   " + label)
-                    self._nav_ids[iid] = tid
-            self.nav.tag_configure("cat", font=(FONT, 10, "bold"))
-            self.nav.bind("<<TreeviewSelect>>", self._on_nav_select)
+                if any(t[0] == tool_id for t in tools):
+                    self.show(_CAT_SLUG[cat][0])   # builds the notebook lazily
+                    break
+            home = self._tool_home.get(tool_id)
+            if home:
+                _sec, nb, tab = home
+                try:
+                    nb.select(tab)
+                except Exception:
+                    pass
 
-            # main area: header + swappable body + result bar
-            main = ttk.Frame(body, style="TFrame", padding=(16, 12))
-            main.pack(side="left", fill="both", expand=True)
+        def _show_section(self, sid):
+            """Section-switch hook used by the GUI crawler."""
+            self.show(sid)
 
-            head = ttk.Frame(main, style="TFrame")
-            head.pack(fill="x")
-            self.title_lbl = ttk.Label(head, text="Welcome", style="Header.TLabel")
-            self.title_lbl.pack(anchor="w")
-            self.desc_lbl = ttk.Label(head, text="", style="Sub.TLabel",
-                                      wraplength=700, justify="left")
-            self.desc_lbl.pack(anchor="w", pady=(2, 8))
-            ttk.Separator(main).pack(fill="x")
-
-            self.container = ttk.Frame(main, style="TFrame")
-            self.container.pack(fill="both", expand=True, pady=(10, 8))
-
-            # result / status bar (shared, inline)
-            bar = ttk.Frame(self, style="Sidebar.TFrame", padding=(12, 6))
-            bar.pack(fill="x", side="bottom")
-            self.status_lbl = ttk.Label(bar, text="Ready", style="Status.TLabel",
-                                        width=16, anchor="w")
-            self.status_lbl.pack(side="left")
-            self.openfolder_btn = ttk.Button(bar, text="Open folder",
-                                             command=self._open_last_folder)
-            self.result_lbl = ttk.Label(bar, text="", style="Status.TLabel",
-                                        anchor="w", wraplength=680, justify="left")
-            self.result_lbl.pack(side="left", fill="x", expand=True, padx=8)
-
-        def _select_first_tool(self):
-            for iid, tid in self._nav_ids.items():
-                self.nav.selection_set(iid)
-                self.nav.see(iid)
-                break
-
-        def _select_tool(self, tool_id):
-            for iid, tid in self._nav_ids.items():
-                if tid == tool_id:
-                    self.nav.selection_set(iid)
-                    self.nav.see(iid)
-                    return
-
-        def _on_nav_select(self, _e=None):
-            sel = self.nav.selection()
-            if not sel:
-                return
-            tid = self._nav_ids.get(sel[0])
-            if not tid:
-                return  # a category row
-            self._show_tool(tid)
-
-        def _show_tool(self, tool_id):
-            if self._current is not None:
-                self._current.pack_forget()
-            panel = self._panels.get(tool_id)
-            if panel is None:
-                panel = ttk.Frame(self.container, style="TFrame")
-                builder = getattr(self, "_panel_" + tool_id, None)
-                if builder:
-                    builder(panel)
-                else:
-                    ttk.Label(panel, text="Not implemented.").pack()
-                self._panels[tool_id] = panel
-                self._apply_theme()  # theme any new tk widgets
-            panel.pack(fill="both", expand=True)
-            self._current = panel
-            title, desc = self._tool_meta(tool_id)
-            self.title_lbl.configure(text=title)
-            self.desc_lbl.configure(text=desc)
-            self._clear_result()
-
-        def _tool_meta(self, tool_id):
-            for _cat, tools in TOOL_TREE:
-                for tid, label in tools:
-                    if tid == tool_id:
-                        return label, TOOL_DESCRIPTIONS.get(tid, "")
-            return tool_id, ""
+        # ---- About section
+        def _build_about(self, frame):
+            card = aura.Card(frame, title="About PDF Toolkit")
+            card.pack(fill="x")
+            aura.Heading(card.body, "PDF Toolkit").pack(anchor="w")
+            aura.Caption(card.body, f"Version {APP_VERSION}").pack(
+                anchor="w", pady=(0, 10))
+            ctk.CTkLabel(
+                card.body, font=aura.font(), justify="left", anchor="w",
+                wraplength=560,
+                text="A fast, fully-offline PDF toolkit — merge, split, "
+                     "compress, convert, protect, watermark and more.\n\n"
+                     "100% AI-built, open source, published on QuickOpen. "
+                     "Nothing is ever uploaded anywhere.").pack(anchor="w")
+            aura.Caption(
+                card.body, "Licensed under Apache-2.0. Built on permissive "
+                "libraries: pypdf, pikepdf/qpdf, pypdfium2, Pillow, "
+                "reportlab.").pack(anchor="w", pady=(10, 4))
+            aura.AuraButton(
+                card.body, "Project page: quickopen.ai", kind="ghost",
+                command=lambda: open_with_default_app(PROJECT_URL)).pack(
+                anchor="w", pady=(6, 0))
 
         # ---- background operation runner
         def _bg(self, work, on_ok, button=None, busy="Working…"):
@@ -713,21 +624,23 @@ def build_app():
 
         # ---- result bar helpers
         def _set_status(self, text, kind="idle"):
-            p = self._pal()
-            color = {"working": p["primary"], "ok": p["ok"], "err": p["err"]}.get(
-                kind, p["muted"])
-            self.status_lbl.configure(text=text, foreground=color)
+            # Aura status bar owns idle/working/ok/err styling.
+            self.set_status(text, kind)
 
         def _clear_result(self, keep_status=False):
-            self.result_lbl.configure(text="")
-            self.openfolder_btn.pack_forget()
+            try:
+                self.openfolder_btn.pack_forget()
+            except Exception:
+                pass
             if not keep_status:
-                self._set_status("Ready")
+                self.set_status("Ready")
 
         def _show_error(self, message):
-            self.result_lbl.configure(text="✕ " + message,
-                                      foreground=self._pal()["err"])
-            self.openfolder_btn.pack_forget()
+            try:
+                self.openfolder_btn.pack_forget()
+            except Exception:
+                pass
+            self.set_error(message)
 
         def report_success(self, message, outputs=None):
             """Show a success line, record outputs and offer 'Open folder'."""
@@ -741,10 +654,13 @@ def build_app():
                 self._last_output_dir = (
                     outputs[0] if os.path.isdir(outputs[0])
                     else os.path.dirname(os.path.abspath(outputs[0])))
-                self.openfolder_btn.pack(side="right")
-            self.result_lbl.configure(text="✓ " + message,
-                                      foreground=self._pal()["ok"])
-            self._set_status("done", kind="ok")
+                self.openfolder_btn.pack(side="left")
+            else:
+                try:
+                    self.openfolder_btn.pack_forget()
+                except Exception:
+                    pass
+            self.set_success(message)
 
         def _open_last_folder(self):
             if self._last_output_dir:
@@ -759,8 +675,8 @@ def build_app():
             win = tk.Toplevel(self)
             win.title("Session output history")
             win.geometry("640x360")
-            win.configure(bg=self._pal()["bg"])
-            ttk.Label(win, style="Sub.TLabel", padding=10,
+            win.configure(bg=aura.P("bg"))
+            ttk.Label(win, style="Muted.TLabel", padding=10,
                       text="Outputs produced in this session "
                            "(most ops write a NEW file, so there is no in-place "
                            "undo — revisit any output here).").pack(anchor="w")
@@ -791,35 +707,6 @@ def build_app():
             ttk.Button(btns, text="Open folder",
                        command=lambda: _open_sel(True)).pack(side="left", padx=6)
             ttk.Button(btns, text="Close", command=win.destroy).pack(side="right")
-            self._apply_theme()
-
-        # ---- About
-        def _about(self):
-            win = tk.Toplevel(self)
-            win.title("About PDF Toolkit")
-            win.configure(bg=self._pal()["bg"])
-            win.resizable(False, False)
-            frm = ttk.Frame(win, style="TFrame", padding=18)
-            frm.pack(fill="both", expand=True)
-            ttk.Label(frm, text="PDF Toolkit", style="Header.TLabel").pack(anchor="w")
-            ttk.Label(frm, text=f"Version {APP_VERSION}",
-                      style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
-            ttk.Label(frm, style="TLabel", justify="left", wraplength=380,
-                      text="A fast, fully-offline PDF toolkit — merge, split, "
-                           "compress, convert, protect, watermark and more.\n\n"
-                           "100% AI-built, open source, published on QuickOpen.\n"
-                           "Nothing is ever uploaded anywhere.").pack(anchor="w")
-            ttk.Label(frm, style="Sub.TLabel", justify="left", wraplength=380,
-                      text="Licensed under Apache-2.0. Built on permissive "
-                           "libraries: pypdf, pikepdf/qpdf, pypdfium2, Pillow, "
-                           "reportlab.").pack(anchor="w", pady=(8, 4))
-            link = ttk.Label(frm, text="Project page: quickopen.ai",
-                             style="Ok.TLabel", cursor="hand2")
-            link.pack(anchor="w", pady=(4, 10))
-            link.bind("<Button-1>", lambda e: open_with_default_app(PROJECT_URL))
-            ttk.Button(frm, text="Close", command=win.destroy).pack(anchor="e")
-            win.transient(self)
-            win.grab_set()
 
         # ---- thumbnails
         def make_thumbnail(self, pdf_path, page=1, target_w=520):
@@ -2159,6 +2046,11 @@ def main():
     try:
         App = build_app()
         app = App()
+    except ImportError as exc:
+        # customtkinter (the Aura GUI dependency) is not installed.
+        print(f"{APP_NAME}: the GUI needs the 'customtkinter' package "
+              f"({exc}). Install it with:  pip install customtkinter")
+        return 0
     except tk.TclError as exc:
         # Typically "no display name and no $DISPLAY environment variable".
         print(f"{APP_NAME}: no graphical display available — cannot start the "

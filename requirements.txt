@@ -15,3 +15,7 @@ pypdfium2>=4.30,<5
 Pillow>=10.4,<12
 reportlab>=4.2,<5
 cryptography>=3.1        # pypdf AES read/write (Apache-2.0/BSD, permissive)
+
+# GUI (Aura design system) — CustomTkinter (MIT) + darkdetect (ISC).
+customtkinter>=5.2
+darkdetect>=0.8

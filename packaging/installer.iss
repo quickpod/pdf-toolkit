@@ -5,11 +5,12 @@
 ; quickopen-root.crt (plus docs\ if present).
 
 #define AppName "PDF Toolkit"
-#define AppVersion "1.0.1"
+#define AppVersion "1.0.2"
 #define AppPublisher "QuickOpen (quickopen.ai)"
 #define AppURL "https://quickopen.ai/projects/pdf-toolkit"
 
 [Setup]
+AppMutex=QuickOpen.PDFToolkit
 AppId={{B3D9A7C1-5E42-4F8A-9C2D-7A1E0B3C4D50}
 AppName={#AppName}
 AppVersion={#AppVersion}
@@ -31,7 +32,7 @@ WizardSmallImageFile=branding\wizard-small.bmp
 AppCopyright=Apache-2.0. 100%% AI-built, published on QuickOpen (quickopen.ai).
 VersionInfoCompany=QuickOpen
 VersionInfoProductName=PDF Toolkit
-VersionInfoVersion=1.0.1.0
+VersionInfoVersion=1.0.2.0
 ; Install per-user by default (no admin needed).
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -73,18 +74,3 @@ Type: filesandordirs; Name: "{localappdata}\PDFToolkit"
 // On uninstall, offer to also remove the QuickOpen Root CA. Default No, because
 // other QuickOpen apps on this machine may rely on it — this is opt-in, matching
 // how the installer only adds it with consent.
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  ResultCode: Integer;
-begin
-  if CurUninstallStep = usUninstall then
-  begin
-    if MsgBox('Also remove the QuickOpen Root CA from your Trusted Root store?' + #13#10 +
-              'Choose No if you use other QuickOpen apps that rely on it.',
-              mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
-    begin
-      Exec('certutil.exe', '-delstore -user Root "QuickOpen Root CA"',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    end;
-  end;
-end;

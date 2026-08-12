@@ -32,11 +32,13 @@ jobs:
           pyinstaller --onefile --windowed --name PDFToolkit
           --icon pdf-toolkit.ico
           --version-file packaging/version.txt
+          --hidden-import pdftoolkit.__main__
           --add-data "pdf-toolkit.ico;."
           --collect-all pikepdf
           --collect-all pypdfium2
           --collect-all pypdf
           --collect-all cryptography
+          --collect-all customtkinter
           --collect-submodules reportlab
           --collect-submodules PIL
           pdf_toolkit_app.py
@@ -64,4 +66,10 @@ jobs:
           path: |
             dist/PDFToolkit.exe
             packaging/dist/PDFToolkit-Setup.exe
+          if-no-files-found: error
+      - name: Upload staging (for signed repack)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-toolkit-staging
+          path: packaging/staging
           if-no-files-found: error
