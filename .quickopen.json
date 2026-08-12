@@ -6,6 +6,9 @@
   "license": "Apache-2.0",
   "description": "PDF Toolkit is a local, offline desktop app for everyday PDF work: merge and split, extract/delete/reorder/rotate pages, compress and web-optimize, convert images to PDF and PDF to images or text, password-protect and set permissions, add text or image watermarks and page numbers, edit or strip metadata, redact, compare, and repair — plus batch processing for all of it. 100% open source, built on permissive libraries (pypdf, pikepdf, pypdfium2, Pillow, reportlab); nothing is uploaded anywhere.",
   "aiStack": "Python (tkinter GUI + CLI), pypdf, pikepdf/qpdf, pypdfium2, Pillow, reportlab",
-  "platforms": ["windows"],
+  "platforms": [
+    "windows",
+    "linux"
+  ],
   "buildEntry": "pdf_toolkit_app.py"
 }

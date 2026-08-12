@@ -5,7 +5,7 @@
 ; quickopen-root.crt (plus docs\ if present).
 
 #define AppName "PDF Toolkit"
-#define AppVersion "1.0.4"
+#define AppVersion "1.0.5"
 #define AppPublisher "QuickOpen (quickopen.ai)"
 #define AppURL "https://quickopen.ai/projects/pdf-toolkit"
 
@@ -32,7 +32,7 @@ WizardSmallImageFile=branding\wizard-small.bmp
 AppCopyright=Apache-2.0. 100%% AI-built, published on QuickOpen (quickopen.ai).
 VersionInfoCompany=QuickOpen
 VersionInfoProductName=PDF Toolkit
-VersionInfoVersion=1.0.4.0
+VersionInfoVersion=1.0.5.0
 ; Install per-user by default (no admin needed).
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
