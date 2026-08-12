@@ -22,8 +22,27 @@ if os.name == "nt":
 
 
 
+def _cli_commands():
+    """Return the CLI's subcommand names (empty set if introspection fails)."""
+    try:
+        import argparse
+        from pdftoolkit.__main__ import build_parser
+        for action in build_parser()._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                return set(action.choices)
+    except Exception:
+        pass
+    return set()
+
+
 def main():
     argv = sys.argv[1:]
+    if (argv and not argv[0].startswith("-")
+            and argv[0] not in _cli_commands() and os.path.exists(argv[0])):
+        # Launched with a document path (desktop Exec %f / Explorer "Open
+        # with"), not a CLI subcommand — show the GUI instead of dying with an
+        # argparse usage error.
+        argv = []
     if argv:
         # CLI mode — delegate to the pdftoolkit package's argparse entry point.
         from pdftoolkit import __main__ as cli
