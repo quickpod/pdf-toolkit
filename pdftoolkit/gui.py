@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 r"""PDF Toolkit -- a pure-stdlib tkinter GUI on top of the ``pdftoolkit`` API.
 
-A single main window: a left sidebar of tool categories (Organize, Convert,
-Optimize, Security, Watermark, Pages/Meta, Advanced, Batch) and a main panel
-that swaps to the selected tool.  Every operation calls the tested core library
+Layout per branding/aura-design-system/APP-LAYOUT-LANGUAGE.md, benchmarked
+against PDFgear: a **Home** launcher (Open PDF, a searchable grid of all 29
+tools with a Popular row, and recent files with an Aura empty-state
+illustration) plus five curated category pills (Organize / Convert /
+Optimize & Protect / Marks & Meta / Advanced & Batch), each a notebook of
+tool panels.  A Ctrl+, Settings dialog offers the System/Light/Dark theme
+(fresh installs follow the OS Aura theme live).  Every operation calls the tested core library
 (never re-implements PDF logic) and runs on a background thread so the UI stays
 responsive; results are marshalled back with ``self.after`` and reported in a
 clear inline area -- an output path plus an "Open folder" button on success, or
@@ -32,7 +36,7 @@ import threading
 # this module (e.g. during packaging or on a headless CI box) never fails.
 
 APP_NAME = "PDF Toolkit"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 WINDOW_TITLE = "PDF Toolkit — by QuickOpen (quickopen.ai)"
 PROJECT_URL = "https://quickopen.ai"
 
@@ -49,7 +53,8 @@ POSITIONS = [
 ]
 WM_POSITIONS = POSITIONS + ["tiled"]
 
-ACCENT = "#b71c2d"      # pdf-toolkit icon color (accent for the Aura theme)
+ACCENT = "#5b86f7"      # Aura brand accent (the old per-app red was a legacy
+                        # scaffold accent)
 
 # (category, [(tool_id, label), ...]) -- tool_id maps to a _panel_<id> method.
 TOOL_TREE = [
@@ -101,22 +106,25 @@ TOOL_TREE = [
     ]),
 ]
 
-# Each tool category becomes one Aura sidebar section (a nav pill) whose panel
-# hosts a small notebook of that category's tools.  slug + a DejaVu-safe glyph
-# (see RETROFIT gotcha #10) per category.
-_CAT_SLUG = {
-    "Organize":   ("organize", "▤"),
-    "Convert":    ("convert", "⇄"),
-    "Optimize":   ("optimize", "⚙"),
-    "Security":   ("security", "⊙"),
-    "Watermark":  ("watermark", "✳"),
-    "Pages/Meta": ("pagesmeta", "✎"),
-    "Advanced":   ("advanced", "◈"),
-    "Batch":      ("batch", "◉"),
-}
+# Sidebar navigation, curated to ≤7 pills (APP-LAYOUT-LANGUAGE.md §10): the
+# PDFgear-style Home launcher first, then merged tool categories — each pill
+# hosts a notebook of the TOOL_TREE categories listed.  Glyphs are
+# DejaVu-safe (see RETROFIT gotcha #10).
+NAV_TREE = [
+    ("organize", "Organize", "▤", ["Organize"]),
+    ("convert", "Convert", "⇄", ["Convert"]),
+    ("optimize", "Optimize & Protect", "⊙", ["Optimize", "Security"]),
+    ("marks", "Marks & Meta", "✎", ["Watermark", "Pages/Meta"]),
+    ("advanced", "Advanced & Batch", "◈", ["Advanced", "Batch"]),
+]
+
+# PDFgear-style "Popular" row on Home: the daily-use verbs.
+POPULAR_TOOLS = ("merge", "split", "compress", "images2pdf", "pdf2text",
+                 "protect")
 
 # Module-level section list so the GUI crawler can enumerate every section.
-SECTIONS = [(_CAT_SLUG[cat][0], cat) for cat, _tools in TOOL_TREE] + \
+SECTIONS = [("home", "Home")] + \
+    [(sid, label) for sid, label, _g, _c in NAV_TREE] + \
     [("about", "About")]
 
 
@@ -414,15 +422,22 @@ def build_app():
                 self.statusbar.actions, "Open folder", kind="secondary",
                 height=30, command=self._open_last_folder)
 
-            # One sidebar section per tool category; each hosts a small
-            # (Aura-styled) notebook of that category's tools.
-            for cat, tools in TOOL_TREE:
-                slug, glyph = _CAT_SLUG[cat]
-                self.add_section(slug, cat, glyph,
-                                 self._make_category_builder(cat, tools))
+            # Home (the PDFgear-style launcher) first, then one pill per
+            # curated category group; each hosts an Aura-styled notebook.
+            self._tool_section = {}     # tool_id -> section id
+            self.add_section("home", "Home", "⌂", self._build_home)
+            cat_tools = dict(TOOL_TREE)
+            for sid, label, glyph, cats in NAV_TREE:
+                tools = []
+                for cat in cats:
+                    tools += cat_tools.get(cat, [])
+                for tid, _lbl in tools:
+                    self._tool_section[tid] = sid
+                self.add_section(sid, label, glyph,
+                                 self._make_category_builder(sid, tools))
             self.add_section("about", "About", "ℹ", self._build_about)
 
-            self.show(_CAT_SLUG[TOOL_TREE[0][0]][0])   # Organize
+            self.show("home")
             self.set_status("Ready")
             self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -461,10 +476,17 @@ def build_app():
             filem.add_command(label="Session output history…",
                               command=self._show_history)
             filem.add_separator()
+            filem.add_command(label="Settings…", accelerator="Ctrl+,",
+                              command=self._open_settings)
+            filem.add_separator()
             filem.add_command(label="Exit", command=self._on_close)
             bar.add_cascade(label="File", menu=filem)
 
             viewm = tk.Menu(bar, tearoff=0)
+            viewm.add_command(label="Home (all tools)", accelerator="Ctrl+F",
+                              command=self._focus_tool_search)
+            viewm.add_command(label="Toggle sidebar", accelerator="Ctrl+\\",
+                              command=self.toggle_sidebar)
             viewm.add_command(
                 label="Toggle dark mode",
                 command=lambda: self.set_theme(
@@ -478,6 +500,10 @@ def build_app():
             bar.add_cascade(label="Help", menu=helpm)
             self.configure(menu=bar)
             self.bind_all("<Control-o>", lambda e: self._open_file())
+            self.bind_all("<Control-f>",
+                          lambda e: (self._focus_tool_search(), "break")[1])
+            self.bind_all("<Control-comma>",
+                          lambda e: (self._open_settings(), "break")[1])
 
         def _fill_recent_menu(self):
             self._recent_menu.delete(0, "end")
@@ -510,11 +536,10 @@ def build_app():
                     frame.load_path(p)
 
         # ---- sections (categories) + their tool notebooks
-        def _make_category_builder(self, cat, tools):
+        def _make_category_builder(self, slug, tools):
             """Return a lazy builder that fills a category section with a
             notebook of its tools (each tab hosts one ``_panel_<id>``)."""
-            def builder(frame, cat=cat, tools=tools):
-                slug = _CAT_SLUG[cat][0]
+            def builder(frame, slug=slug, tools=tools):
                 nb = ttk.Notebook(frame)
                 nb.pack(fill="both", expand=True)
                 for tid, label in tools:
@@ -534,10 +559,9 @@ def build_app():
 
         def _goto_tool(self, tool_id):
             """Switch to the section+tab that hosts ``tool_id``."""
-            for cat, tools in TOOL_TREE:
-                if any(t[0] == tool_id for t in tools):
-                    self.show(_CAT_SLUG[cat][0])   # builds the notebook lazily
-                    break
+            sid = self._tool_section.get(tool_id)
+            if sid:
+                self.show(sid)             # builds the notebook lazily
             home = self._tool_home.get(tool_id)
             if home:
                 _sec, nb, tab = home
@@ -549,6 +573,180 @@ def build_app():
         def _show_section(self, sid):
             """Section-switch hook used by the GUI crawler."""
             self.show(sid)
+
+        # =================================================================
+        # Home — the PDFgear-style launcher (popular / all tools / recents)
+        # =================================================================
+        def _build_home(self, frame):
+            frame.grid_columnconfigure(0, weight=1)
+            frame.grid_rowconfigure(1, weight=1)
+            tb = aura.Toolbar(frame)
+            tb.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+            tb.add_button("Open PDF…", self._open_file, kind="primary")
+            self.home_search = tb.add_search(
+                "Find a tool…  (Ctrl+F)",
+                on_change=lambda _t: self._fill_tool_grid(), width=240)
+
+            self._home_scroll = ctk.CTkScrollableFrame(frame,
+                                                       fg_color="transparent")
+            self._home_scroll.grid(row=1, column=0, sticky="nsew")
+
+            aura.SectionLabel(self._home_scroll, "Popular").pack(
+                anchor="w", pady=(0, 6))
+            pop = ctk.CTkFrame(self._home_scroll, fg_color="transparent")
+            pop.pack(fill="x")
+            label_of = {tid: lbl for _cat, tools in TOOL_TREE
+                        for tid, lbl in tools}
+            for i, tid in enumerate(POPULAR_TOOLS):
+                self._tool_card(pop, tid, label_of[tid], i // 3, i % 3)
+            for c in range(3):
+                pop.grid_columnconfigure(c, weight=1, uniform="pop")
+
+            aura.SectionLabel(self._home_scroll, "All tools").pack(
+                anchor="w", pady=(16, 6))
+            self._grid_frame = ctk.CTkFrame(self._home_scroll,
+                                            fg_color="transparent")
+            self._grid_frame.pack(fill="x")
+            for c in range(3):
+                self._grid_frame.grid_columnconfigure(c, weight=1,
+                                                      uniform="grid")
+
+            aura.SectionLabel(self._home_scroll, "Recent files").pack(
+                anchor="w", pady=(16, 6))
+            self._recent_frame = ctk.CTkFrame(self._home_scroll,
+                                              fg_color="transparent")
+            self._recent_frame.pack(fill="x", pady=(0, 8))
+
+            self._fill_tool_grid()
+            self._fill_home_recents()
+
+        def _tool_card(self, parent, tid, label, row, col):
+            """One clickable launcher card (title + one-line description)."""
+            card = ctk.CTkFrame(parent, corner_radius=10, border_width=1,
+                                border_color=aura._pair("border"),
+                                fg_color=aura._pair("surface"))
+            card.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
+            t = ctk.CTkLabel(card, text=label, font=aura.font(12, "bold"),
+                             anchor="w")
+            t.pack(anchor="w", fill="x", padx=12, pady=(10, 0))
+            c = ctk.CTkLabel(card, text=TOOL_DESCRIPTIONS.get(tid, ""),
+                             font=aura.font(role="caption"),
+                             text_color=aura._pair("muted"),
+                             anchor="nw", justify="left", wraplength=220)
+            c.pack(anchor="w", fill="both", expand=True, padx=12, pady=(2, 10))
+            for w in (card, t, c):
+                w.bind("<Button-1>", lambda _e, tid=tid: self._goto_tool(tid))
+                try:
+                    w.configure(cursor="hand2")
+                except Exception:
+                    pass
+            return card
+
+        def _fill_tool_grid(self):
+            """(Re)build the All-tools grid, filtered by the Home search."""
+            q = (self.home_search.get() or "").strip().lower()
+            for w in list(self._grid_frame.winfo_children()):
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+            shown = 0
+            for cat, tools in TOOL_TREE:
+                for tid, label in tools:
+                    hay = (label + " " + cat + " "
+                           + TOOL_DESCRIPTIONS.get(tid, "")).lower()
+                    if q and q not in hay:
+                        continue
+                    self._tool_card(self._grid_frame, tid, label,
+                                    shown // 3, shown % 3)
+                    shown += 1
+            if not shown:
+                aura.Caption(self._grid_frame,
+                             "No tool matches — try “merge”, “compress”, "
+                             "“watermark”…").grid(row=0, column=0, sticky="w",
+                                                  padx=4, pady=4)
+
+        def _fill_home_recents(self):
+            if not hasattr(self, "_recent_frame"):
+                return
+            for w in list(self._recent_frame.winfo_children()):
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+            recent = [p for p in guiconfig.get_recent() if os.path.exists(p)]
+            if not recent:
+                empty = aura.EmptyState(
+                    self._recent_frame, title="Nothing recent yet",
+                    caption="PDFs you open — and every file a tool produces — "
+                            "appear here for quick access.",
+                    image=(asset_path("assets/docs-empty-light.png"),
+                           asset_path("assets/docs-empty-dark.png")),
+                    height=290)
+                empty.pack(fill="x")
+                return
+            for p in recent[:8]:
+                btn = ctk.CTkButton(
+                    self._recent_frame, text=p, anchor="w", height=30,
+                    corner_radius=8, fg_color="transparent",
+                    hover_color=(aura._pal["light"]["surface2"],
+                                 aura._pal["dark"]["surface2"]),
+                    text_color=aura._pair("muted"), font=aura.font(role="body"),
+                    command=lambda pp=p: open_with_default_app(pp))
+                btn.pack(fill="x", pady=1)
+
+        def _focus_tool_search(self):
+            try:
+                self.show("home")
+                self.home_search.focus_set()
+            except Exception:
+                pass
+
+        # ---- settings (Ctrl+,)
+        def _open_settings(self):
+            dlg = aura.Dialog(self, title="Settings", size=(520, 360))
+
+            aura.SectionLabel(dlg.body, "Appearance").pack(anchor="w",
+                                                           pady=(0, 2))
+            trow = ctk.CTkFrame(dlg.body, fg_color="transparent")
+            trow.pack(anchor="w", pady=(4, 2))
+            aura.Caption(trow, "Theme").pack(side="left", padx=(0, 10))
+            cur = guiconfig.get_theme()
+            th = aura.AuraOption(trow, values=["System", "Light", "Dark"],
+                                 width=110, height=30,
+                                 command=self._set_theme_pref)
+            th.set(cur.capitalize() if cur in ("light", "dark") else "System")
+            th.pack(side="left")
+            aura.Caption(dlg.body,
+                         "System follows the OS Aura Dark/Light live.").pack(
+                anchor="w", pady=(0, 14))
+
+            aura.SectionLabel(dlg.body, "History").pack(anchor="w",
+                                                        pady=(0, 2))
+            hrow = ctk.CTkFrame(dlg.body, fg_color="transparent")
+            hrow.pack(anchor="w", pady=(6, 0))
+            aura.AuraButton(hrow, "Clear recent files", kind="secondary",
+                            height=30,
+                            command=lambda: (self._clear_recent(),
+                                             self._fill_home_recents())).pack(
+                side="left")
+            aura.AuraButton(hrow, "Session output history…", kind="ghost",
+                            height=30,
+                            command=self._show_history).pack(side="left",
+                                                             padx=(8, 0))
+
+            dlg.add_button("Close")
+
+        def _set_theme_pref(self, choice):
+            pref = str(choice).lower()
+            if pref == "system":
+                guiconfig.set_theme("system")
+                self._follow_system = True
+                if self._sys_listener is None:
+                    self._start_system_listener()
+                self.set_theme(aura._system_theme(), _system=True)
+            elif pref in ("light", "dark"):
+                self.set_theme(pref)     # persists via on_theme_change
 
         # ---- About section
         def _build_about(self, frame):
@@ -564,6 +762,10 @@ def build_app():
                      "compress, convert, protect, watermark and more.\n\n"
                      "100% AI-built, open source, published on QuickOpen. "
                      "Nothing is ever uploaded anywhere.").pack(anchor="w")
+            aura.Caption(card.body,
+                         "Shortcuts: Ctrl+O open a PDF · Ctrl+F find a tool "
+                         "· Ctrl+, settings · Ctrl+\\ sidebar").pack(
+                anchor="w", pady=(10, 0))
             aura.Caption(
                 card.body, "Licensed under Apache-2.0. Built on permissive "
                 "libraries: pypdf, pikepdf/qpdf, pypdfium2, Pillow, "
@@ -650,6 +852,7 @@ def build_app():
                     self._history.append(o)
                     guiconfig.add_recent(o)
             self._fill_recent_menu()
+            self._fill_home_recents()
             if outputs:
                 self._last_output_dir = (
                     outputs[0] if os.path.isdir(outputs[0])
@@ -670,6 +873,7 @@ def build_app():
             if path:
                 guiconfig.add_recent(path)
                 self._fill_recent_menu()
+                self._fill_home_recents()
 
         def _show_history(self):
             win = tk.Toplevel(self)

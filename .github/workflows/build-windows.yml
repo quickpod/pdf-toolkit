@@ -34,6 +34,8 @@ jobs:
           --version-file packaging/version.txt
           --hidden-import pdftoolkit.__main__
           --add-data "pdf-toolkit.ico;."
+          --add-data "pdf-toolkit.png;."
+          --add-data "assets;assets"
           --collect-all pikepdf
           --collect-all pypdfium2
           --collect-all pypdf

@@ -35,7 +35,7 @@ from .batch import (
     batch_convert_to_images,
 )
 
-__version__ = "0.1.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "PdfToolkitError",
